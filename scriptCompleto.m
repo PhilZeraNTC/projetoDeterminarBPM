@@ -1,39 +1,33 @@
-%% =====================================================================
-%  PARTE 0: CONFIGURAÇÃO INICIAL
-%  =====================================================================
 clear; clc; close all;
 
-% Defina o nome do arquivo de áudio
-audioFile = 'MasQueNada.mp3'; 
+% Defina o arquivo de áudio
+audioFile = 'Harder,Better,Faster,Stronger.mp3'; 
 
 % Carregar e pré-processar o áudio
-[y, Fs] = audioread(audioFile);
-if size(y, 2) > 1, y = mean(y, 2); end
-y = y / max(abs(y));
+[y, Fs] = audioread(audioFile); % Carrega o audio, y é uma lista de valores de amplitude do sinal e Fs é a taxa de amostragem em Hz.
+if size(y, 2) > 1, y = mean(y, 2); end % Se for um áudio estéro converte em mono
+y = y / max(abs(y)); %normaliza y para tratar os valores de amplitude de 0 a 1
 
 % Criar vetor de tempo para o sinal completo
 t = (0:length(y)-1) / Fs;
 
-disp(['Áudio carregado: ' audioFile]);
+disp(['áudio carregado: ' audioFile]);
 disp(['Taxa de amostragem (Fs): ' num2str(Fs) ' Hz']);
 
 
-%% =====================================================================
-%  PARTE 1: ANÁLISE EXPLORATÓRIA DO SINAL 
-%  =====================================================================
+% Plots do sinal
 
-% --- 1.1: Resposta no Domínio do Tempo e da Frequência (Global) ---
 disp('Gerando gráficos globais de tempo e frequência...');
 
 figure('Name', 'Análise Global do Sinal');
 % Plot no domínio do tempo
 subplot(2,1,1);
 plot(t, y);
-title('Sinal de Áudio no Domínio do Tempo');
+title('Sinal de áudio no Domínio do Tempo');
 xlabel('Tempo (s)');
 ylabel('Amplitude Normalizada');
 grid on;
-legend('Sinal de Áudio (y)');
+legend('Sinal de áudio (y)');
 
 % Plot no domínio da frequência (FFT do sinal inteiro)
 N = length(y);
@@ -48,12 +42,12 @@ plot(f, P1);
 title('Espectro de Frequência Global (FFT)');
 xlabel('Frequência (Hz)');
 ylabel('Magnitude');
-xlim([0 Fs/2]); % Limita até a frequência de Nyquist
+xlim([0 Fs/2]);
 grid on;
 legend('Magnitude do Espectro');
 
 
-% --- 1.2: Análise de Estacionariedade (Média e Variância por Janela) ---
+% Análise de Estacionariedade (Média e Variância por Janela)
 disp('Analisando estacionariedade com janela deslizante...');
 
 winSize_stats = 2048; % Tamanho da janela para análise estatística
@@ -90,82 +84,74 @@ ylabel('Variância');
 grid on;
 
 
-% --- 1.3: Visualização Tempo-Frequência (Espectrograma) ---
+% Visualização Tempo-Frequência (Espectrograma)
 disp('Gerando espectrograma para visualizar energia...');
 
 figure('Name', 'Visualização Tempo-Frequência');
 spectrogram(y, hann(1024), 512, 1024, Fs, 'yaxis');
-title('Espectrograma do Sinal de Áudio');
+title('Espectrograma do Sinal de áudio');
 % O espectrograma mostra como a energia (cor) das frequências (eixo Y)
 % varia ao longo do tempo (eixo X).
 
 
-%% =====================================================================
-%  PARTE 2.A: DETECÇÃO DE BPM VIA FOURIER (STFT) - MÉTODO ORIGINAL
-%  =====================================================================
+% DETECÇÃO DE BPM VIA FOURIER (STFT)
 disp('Iniciando detecção de BPM via STFT...');
 
-% --- Parâmetros ---
+% Parâmetros 
 frameSize = 1024;
 hopSize = frameSize / 2;
 
-% --- STFT e ODF via Fluxo Espectral ---
-[S, ~, T_stft] = stft(y, Fs, 'Window', hann(frameSize), 'OverlapLength', hopSize, 'FFTLength', frameSize);
+% STFT e ODF via Fluxo Espectral
+[S, ~, T_stft] = stft(y, Fs, 'Window', hann(frameSize), 'OverlapLength', hopSize, 'FFTLength', frameSize); % Cria frames de tamanho 1024 e faz transformada rápida de fourier nesses quadros para ver a frequencia em cada pequeno instante de tempo
 magnitudeSpectrum = abs(S);
 spectralFlux = zeros(1, size(magnitudeSpectrum, 2) - 1);
 for i = 1:(size(magnitudeSpectrum, 2) - 1)
-    spectralFlux(i) = sum(max(0, magnitudeSpectrum(:, i+1) - magnitudeSpectrum(:, i)));
+    spectralFlux(i) = sum(max(0, magnitudeSpectrum(:, i+1) - magnitudeSpectrum(:, i))); % Calcula todas os aumentos de energia do sinal em diferentes frequencias gerando um unico valor por instante.
 end
 ODF_ft = spectralFlux / max(spectralFlux); % Renomeado para ODF_ft
 timeODF_ft = T_stft(1:end-1);
 
-% --- Suavização e Análise de BPM (FT) ---
+% Suavização e Análise de BPM (FT)
 windowSizeSmooth = round(0.1 * Fs / hopSize);
 if windowSizeSmooth < 1, windowSizeSmooth = 1; end
-ODF_ft_smooth = conv(ODF_ft, ones(1, windowSizeSmooth)/windowSizeSmooth, 'valid');
+ODF_ft_smooth = conv(ODF_ft, ones(1, windowSizeSmooth)/windowSizeSmooth, 'valid'); % Cada ponto da ODF se torna a média de seus vizinhos, evitando pequenas flutuações de timbre ou ruidos.
 [bpm_ft, bpm_spectrum_ft, bpm_candidates_ft] = analyze_odf(ODF_ft_smooth, Fs / hopSize);
 
 
-%% =====================================================================
-%  PARTE 2.B: DETECÇÃO DE BPM VIA WAVELET (CWT) - MÉTODO COMPARATIVO
-%  =====================================================================
+% DETECÇÃO DE BPM VIA WAVELET (CWT) - MÉTODO COMPARATIVO
 disp('Iniciando detecção de BPM via CWT...');
 
-% --- CWT e ODF via Energia Wavelet ---
+% CWT e ODF via Energia Wavelet 
 
 % SOLUÇÃO PARA O ERRO DE MEMÓRIA:
-% Vamos analisar um trecho de 20 segundos do meio da música, 
-% onde o ritmo já está bem estabelecido.
+% Analise de um trecho de 20 segundos do meio da música, onde o ritmo já está bem estabelecido.    
 start_time = 30; % Começar em 30 segundos
 duration = 20;   % Analisar por 20 segundos
-y_cwt = y(start_time*Fs : (start_time+duration)*Fs);
+y_cwt = y(start_time*Fs : (start_time+duration)*Fs);        
 
 disp(['Analisando trecho da CWT de ' num2str(start_time) 's a ' num2str(start_time+duration) 's.']);
 
 % Aplicar a CWT apenas no trecho menor
 [cfs, f_cwt] = cwt(y_cwt, Fs); % cfs = coeficientes, f = frequências
 
-% A ODF da CWT é a soma da energia (magnitude) dos coeficientes em todas
-% as escalas (frequências) para cada ponto no tempo.
+% A ODF da CWT é a soma da energia (magnitude) dos coeficientes em todas as escalas (frequências) para cada ponto no tempo.
 ODF_cwt = sum(abs(cfs), 1);
 ODF_cwt = ODF_cwt / max(ODF_cwt);
 timeODF_cwt = (0:length(ODF_cwt)-1) / Fs;
 
-% --- Suavização e Análise de BPM (CWT) ---
+% Suavização e Análise de BPM (CWT)
 % A taxa de amostragem da ODF da CWT é a mesma do áudio original (Fs)
 windowSizeSmooth_cwt = round(0.1 * Fs);
 ODF_cwt_smooth = conv(ODF_cwt, ones(1, windowSizeSmooth_cwt)/windowSizeSmooth_cwt, 'valid');
 [bpm_cwt, bpm_spectrum_cwt, bpm_candidates_cwt] = analyze_odf(ODF_cwt_smooth, Fs);
 
-%% =====================================================================
-%  PARTE 3: COMPARAÇÃO DOS RESULTADOS
-%  =====================================================================
+% COMPARAÇÃO DOS RESULTADOS
 disp('Gerando gráficos comparativos...');
 
 minBPM = 50;
 maxBPM = 250;
 
-% --- Comparação das ODFs ---
+% Comparação das ODFs
 figure('Name', 'Comparativo das ODFs');
 subplot(2,1,1);
 plot(timeODF_ft(1:length(ODF_ft_smooth)), ODF_ft_smooth, 'b'); 
@@ -177,7 +163,7 @@ plot(timeODF_cwt(1:length(ODF_cwt_smooth)), ODF_cwt_smooth, 'g');
 title('ODF Suavizada a partir da CWT (Energia Wavelet)');
 xlabel('Tempo (s)'); ylabel('Amplitude Normalizada'); grid on; xlim([5 15]);
 
-% --- Comparação dos Espectros de BPM ---
+% Comparação dos Espectros de BPM
 figure('Name', 'Comparativo dos Espectros de BPM');
 hold on;
 % CORREÇÃO 1: Plotar a partir do segundo elemento para ignorar o Componente DC
@@ -206,9 +192,7 @@ fprintf('BPM Estimado (STFT): %.2f\n', bpm_ft);
 fprintf('BPM Estimado (CWT): %.2f\n', bpm_cwt);
 
 
-%% =====================================================================
-%  FUNÇÃO AUXILIAR DE ANÁLISE DE ODF
-%  =====================================================================
+% FUNÇÃO AUXILIAR DE ANÁLISE DE ODF
 function [estimatedBPM, Y_magnitude, bpm_candidates] = analyze_odf(odf, Fs_odf)
     % Esta função encapsula a análise de FFT de uma ODF para evitar repetição de código
     N = length(odf);
